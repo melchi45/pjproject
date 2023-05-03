@@ -1,0 +1,9 @@
+[submodule "third_party/portaudio"]
+	path = third_party/portaudio
+	url = https://github.com/pol51/portaudio.git
+[submodule "third_party/openssl"]
+	path = third_party/openssl
+	url = https://github.com/pol51/OpenSSL-CMake.git
+[submodule "third_party/opus"]
+	path = third_party/opus
+	url = https://git.xiph.org/opus.git

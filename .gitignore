@@ -38,6 +38,10 @@ config_auto.h
 sip_autoconf.h
 *.depend
 
+**/build/CMakeFiles/**
+**/build/.cmake/**
+**/build/CMakeCache.txt
+
 # Apple stuff
 *.DS_Store
 autom4te.cache
@@ -86,3 +90,5 @@ tests/fuzz/*.o
 cov-int/
 getversion.mak
 configure.out
+
+linux
