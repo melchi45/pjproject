@@ -88,6 +88,14 @@ struct MediaFormatAudio : public MediaFormat
      * Export to pjmedia_format.
      */
     pjmedia_format toPj() const;
+
+public:
+    /**
+     * Default constructor
+     */
+    MediaFormatAudio() : clockRate(0), channelCount(0), frameTimeUsec(0),
+                         bitsPerSample(0), avgBps(0), maxBps(0)
+    {}
 };
 
 /**
@@ -425,6 +433,81 @@ typedef std::vector<AudioMedia*> AudioMediaVector;
 
 /** Array of Audio Media */
 typedef std::vector<AudioMedia> AudioMediaVector2;
+
+/**
+ * This structure describes a media frame.
+ */
+struct MediaFrame
+{
+    pjmedia_frame_type   type;      /**< Frame type.                        */
+    ByteVector           buf;       /**< Frame buffer content.              */
+    unsigned             size;      /**< Frame size in bytes.               */
+
+public:
+    /**
+     * Default constructor
+     */
+    MediaFrame()
+    : type(PJMEDIA_FRAME_TYPE_NONE),
+      size(0)
+    {}
+};
+
+/**
+ * Audio Media Port.
+ */
+class AudioMediaPort : public AudioMedia
+{
+public:
+    /**
+     * Constructor.
+     */
+    AudioMediaPort();
+
+    /**
+     * Destructor. This will unregister the audio media port from the
+     * conference bridge.
+     */
+    virtual ~AudioMediaPort();
+
+    /**
+     * Create an audio media port and register it to the conference bridge.
+     *
+     * @param name      The port name.
+     * @param fmt       The audio format.
+     */
+    void createPort(const string &name, MediaFormatAudio &fmt)
+                    PJSUA2_THROW(Error);
+
+    /*
+     * Callbacks
+     */
+    /**
+     * This callback is called to request a frame from this port. On input,
+     * frame.size indicates the capacity of the frame buffer and frame.buf
+     * will initially be an empty vector. Application can then set the frame
+     * type and fill the vector.
+     *
+     * @param frame       The frame.
+     */
+    virtual void onFrameRequested(MediaFrame &frame)
+    { PJ_UNUSED_ARG(frame); }
+
+    /**
+     * This callback is called when this port receives a frame. The frame
+     * content will be provided in frame.buf vector, and the frame size
+     * can be found in either frame.size or the vector's size (both
+     * have the same value).
+     *
+     * @param frame       The frame.
+     */
+    virtual void onFrameReceived(MediaFrame &frame)
+    { PJ_UNUSED_ARG(frame); }
+
+private:
+    pj_pool_t *pool;
+    pjmedia_port port;
+};
 
 /**
  * This structure contains additional info about AudioMediaPlayer.
@@ -807,6 +890,11 @@ private:
  */
 struct AudioDevInfo
 {
+    /**
+     * The device ID
+     */
+    pjmedia_aud_dev_index id;
+
     /**
      * The device name
      */
@@ -1938,9 +2026,14 @@ struct VideoPreviewOpParam {
     unsigned                windowFlags;
 
     /**
-     * Media format. If left unitialized, this parameter will not be used.
+     * Media format video. If left uninitialized, this parameter will not be used and 
+     * the capture device will be opened using PJMEDIA wrapper default format, 
+     * e.g: 
+     * - Android : PJMEDIA_FORMAT_I420 using the first supported size and 15fps
+     * - iOS : PJMEDIA_FORMAT_BGRA using size 352x288 and 15fps
+     * Note that when the preview is already opened, this setting will be ignored.
      */
-    MediaFormat             format;
+    MediaFormatVideo        format;
 
     /**
      * Optional output window to be used to display the video preview.
@@ -2434,8 +2527,12 @@ struct CodecParamInfo
     unsigned    maxBps;                 /**< Maximum bandwidth in bits/sec  */
     unsigned    maxRxFrameSize;         /**< Maximum frame size             */
     unsigned    frameLen;               /**< Decoder frame ptime in msec.   */
+    unsigned    frameLenDenum;          /**< Decoder frame ptime denum, or
+                                             zero if ptime is integer.      */
     unsigned    encFrameLen;            /**< Encoder ptime, or zero if it's
                                              equal to decoder ptime.        */
+    unsigned    encFrameLenDenum;       /**< Encoder ptime denum, or zero
+                                             if ptime is integer.           */
     unsigned    pcmBitsPerSample;       /**< Bits/sample in the PCM side    */
     unsigned    pt;                     /**< Payload type.                  */
     pjmedia_format_id fmtId;            /**< Source format, it's format of
@@ -2452,7 +2549,9 @@ public:
       maxBps(0),
       maxRxFrameSize(0),
       frameLen(0),
+      frameLenDenum(0),
       encFrameLen(0),
+      encFrameLenDenum(0),
       pcmBitsPerSample(0),
       pt(0),
       fmtId(PJMEDIA_FORMAT_L16)
@@ -2506,6 +2605,7 @@ struct CodecOpusConfig
     unsigned   sample_rate; /**< Sample rate in Hz.                     */
     unsigned   channel_cnt; /**< Number of channels.                    */
     unsigned   frm_ptime;   /**< Frame time in msec.                    */
+    unsigned   frm_ptime_denum;/**< Frame time denumerator.             */
     unsigned   bit_rate;    /**< Encoder bit rate in bps.               */
     unsigned   packet_loss; /**< Encoder's expected packet loss pct.    */
     unsigned   complexity;  /**< Encoder complexity, 0-10(10 is highest)*/

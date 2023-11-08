@@ -343,6 +343,8 @@ void StreamInfo::fromPj(const pjsua_stream_info &info)
         remoteRtcpAddress = straddr;
         txPt = info.info.aud.tx_pt;
         rxPt = info.info.aud.rx_pt;
+        audTxEventPt = info.info.aud.tx_event_pt;
+        audRxEventPt = info.info.aud.rx_event_pt;
         codecName = pj2Str(info.info.aud.fmt.encoding_name);
         codecClockRate = info.info.aud.fmt.clock_rate;
         audCodecParam.fromPj(*info.info.aud.param);
@@ -874,6 +876,20 @@ void Call::vidSetStream(pjsua_call_vid_strm_op op,
     PJSUA2_CHECK_EXPR( pjsua_call_set_vid_strm(id, op, &prm) );
 #else
     PJ_UNUSED_ARG(op);
+    PJ_UNUSED_ARG(param);
+    PJSUA2_RAISE_ERROR(PJ_EINVALIDOP);
+#endif
+}
+
+void Call::vidStreamModifyCodecParam(int med_idx, const VidCodecParam &param)
+                                     PJSUA2_THROW(Error)
+{
+#if PJSUA_HAS_VIDEO
+    pjmedia_vid_codec_param prm = param.toPj();
+    PJSUA2_CHECK_EXPR( pjsua_call_vid_stream_modify_codec_param(id, med_idx,
+                                                                &prm) );
+#else
+    PJ_UNUSED_ARG(med_idx);
     PJ_UNUSED_ARG(param);
     PJSUA2_RAISE_ERROR(PJ_EINVALIDOP);
 #endif

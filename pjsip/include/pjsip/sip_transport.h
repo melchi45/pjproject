@@ -203,7 +203,35 @@ typedef enum pjsip_tpselector_type
     /** Use the specific listener to send request. */
     PJSIP_TPSELECTOR_LISTENER,
 
+    /** Use the IP version criteria to send request. */
+    PJSIP_TPSELECTOR_IP_VER,
+
 } pjsip_tpselector_type;
+
+/**
+ * This enumerator describes the IP version criteria for pjsip_tpselector.
+ */
+typedef enum pjsip_tpselector_ip_ver
+{
+    /** IPv4 only. */
+    PJSIP_TPSELECTOR_USE_IPV4_ONLY,
+
+    /**
+     * No preference. IP version used will depend on the order of addresses
+     * returned by pjsip_resolver.
+     */
+    PJSIP_TPSELECTOR_NO_PREFERENCE,
+
+    /** IPv4 is preferred. */
+    PJSIP_TPSELECTOR_PREFER_IPV4,
+
+    /** IPv6 is preferred. */
+    PJSIP_TPSELECTOR_PREFER_IPV6,
+
+    /** IPv6 only. */
+    PJSIP_TPSELECTOR_USE_IPV6_ONLY
+
+} pjsip_tpselector_ip_ver;
 
 
 /**
@@ -240,11 +268,15 @@ typedef struct pjsip_tpselector
      */
     pj_bool_t disable_connection_reuse;
 
-    /** Union representing the transport/listener criteria to be used. */
+    /**
+     * Union representing the transport/listener/IP version criteria
+     * to be used.
+     */
     union {
-        pjsip_transport *transport;
-        pjsip_tpfactory *listener;
-        void            *ptr;
+        pjsip_transport         *transport;
+        pjsip_tpfactory         *listener;
+        pjsip_tpselector_ip_ver  ip_ver;
+        void                    *ptr;
     } u;
 
 } pjsip_tpselector;
@@ -838,6 +870,11 @@ struct pjsip_transport
     pj_size_t               last_recv_len;  /**< Last received data length. */
 
     void                   *data;           /**< Internal transport data.   */
+    unsigned                initial_timeout;/**< Initial timeout interval
+                                                 to be applied to incoming
+                                                 TCP/TLS transports when no
+                                                 valid data received after
+                                                 a successful connection.   */
 
     /**
      * Function to be called by transport manager to send SIP message.
@@ -1623,6 +1660,58 @@ typedef void (*pjsip_tp_on_rx_dropped_cb)(pjsip_tp_dropped_data *data);
 PJ_DECL(pj_status_t) pjsip_tpmgr_set_drop_data_cb(pjsip_tpmgr *mgr,
                                                   pjsip_tp_on_rx_dropped_cb cb);
 
+
+/**
+ * Structure of received data that will be passed to data received
+ * notification callback.
+ */
+typedef struct pjsip_tp_rx_data
+{
+    /**
+     * The transport receiving the data.
+     */
+    pjsip_transport *tp;
+
+    /**
+     * The data.
+     */
+    void            *data;
+
+    /**
+     * The data length.
+     * If application wishes to discard some data of len p, it can pass
+     * the remaining data back to PJSIP to be processed by setting the len
+     * to (len - p).
+     * If application wants to shutdown the transport from within the
+     * callback (for example after if finds out that the data is
+     * suspicious/garbage), app must set the len to zero to prevent
+     * further processing of the data.
+     */
+    pj_size_t        len;
+
+} pjsip_tp_rx_data;
+
+
+/**
+ * Type of callback to data received notifications.
+ *
+ * @param data      The received data.
+ */
+typedef pj_status_t (*pjsip_tp_on_rx_data_cb)(pjsip_tp_rx_data *data);
+
+
+/**
+ * Set callback to be called whenever any data is received by a stream
+ * oriented transport. This can be useful for application to do its own
+ * verification, filtering, or logging of potential malicious activities.
+ * 
+ * @param mgr       Transport manager.
+ * @param cb        The callback function, set to NULL to reset the callback.
+ *
+ * @return          PJ_SUCCESS on success, or the appropriate error code.
+ */
+PJ_DECL(pj_status_t) pjsip_tpmgr_set_recv_data_cb(pjsip_tpmgr *mgr,
+                                                  pjsip_tp_on_rx_data_cb cb);
 
 /**
  * @}

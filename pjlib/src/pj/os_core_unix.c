@@ -51,6 +51,10 @@
 #endif
 #include <pj/config.h>
 
+#if defined(PJ_HAS_FCNTL_H) && PJ_HAS_FCNTL_H != 0
+#  include <fcntl.h>
+#endif
+
 #define THIS_FILE   "os_core_unix.c"
 
 #define SIGNATURE1  0xDEAFBEEF
@@ -637,7 +641,7 @@ pj_status_t pj_thread_init(void)
  */
 static void set_thread_display_name(const char *name)
 {
-#if (defined(PJ_LINUX) && PJ_LINUX != 0) ||                                    \
+#if (defined(PJ_LINUX) && PJ_LINUX != 0) || \
     (defined(PJ_ANDROID) && PJ_ANDROID != 0)
     char xname[16];
     // On linux, thread display name length is restricted to 16 (include '\0')
@@ -657,7 +661,7 @@ static void set_thread_display_name(const char *name)
 #elif defined(PJ_HAS_PTHREAD_SET_NAME_NP) && PJ_HAS_PTHREAD_SET_NAME_NP != 0
     pthread_set_name_np(pthread_self(), name);
 #else
-#   warning "OS not support set thread display name"
+// #   warning "OS does not support set thread display name"
     PJ_UNUSED_ARG(name);
 #endif
 }
@@ -2161,3 +2165,17 @@ PJ_DEF(int) pj_run_app(pj_main_func_ptr main_func, int argc, char *argv[],
     return (*main_func)(argc, argv);
 }
 #endif
+
+/*
+ * Set file descriptor close-on-exec flag
+ */
+PJ_DEF(pj_status_t) pj_set_cloexec_flag(int fd)
+{
+#if defined(FD_CLOEXEC)
+    int flags = fcntl(fd, F_GETFD);
+    if (fcntl(fd, F_SETFD, flags | FD_CLOEXEC) == -1) {
+        return PJ_RETURN_OS_ERROR(pj_get_native_netos_error());
+    }
+#endif
+    return PJ_SUCCESS;
+}

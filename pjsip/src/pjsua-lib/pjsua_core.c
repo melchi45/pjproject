@@ -373,6 +373,9 @@ PJ_DEF(void) pjsua_acc_config_default(pjsua_acc_config *cfg)
     cfg->register_on_acc_add = PJ_TRUE;
     cfg->mwi_expires = PJSIP_MWI_DEFAULT_EXPIRES;
 
+    cfg->ipv6_sip_use = PJSUA_IPV6_ENABLED_NO_PREFERENCE;
+    cfg->ipv6_media_use = PJSUA_IPV6_ENABLED_PREFER_IPV4;
+
     cfg->media_stun_use = PJSUA_STUN_RETRY_ON_FAILURE;
     cfg->ip_change_cfg.shutdown_tp = PJ_TRUE;
     cfg->ip_change_cfg.hangup_calls = PJ_FALSE;
@@ -660,6 +663,17 @@ static pj_bool_t mod_pjsua_on_rx_request(pjsip_rx_data *rdata)
 {
     pj_bool_t processed = PJ_FALSE;
 
+    if (pjsip_tsx_detect_merged_requests(rdata)) {
+        PJ_LOG(4, (THIS_FILE, "Merged request detected"));
+
+        /* Respond with 482 (Loop Detected) */
+        pjsip_endpt_respond(pjsua_var.endpt, NULL, rdata,
+                            PJSIP_SC_LOOP_DETECTED, NULL,
+                            NULL, NULL, NULL);
+
+        return PJ_TRUE;
+    }
+
     PJSUA_LOCK();
 
     if (rdata->msg_info.msg->line.req.method.id == PJSIP_INVITE_METHOD) {
@@ -745,7 +759,7 @@ PJ_DEF(pj_status_t) pjsua_reconfigure_logging(const pjsua_logging_config *cfg)
 
     /* If output log file is desired, create the file: */
     if (pjsua_var.log_cfg.log_filename.slen) {
-        unsigned flags = PJ_O_WRONLY;
+        unsigned flags = PJ_O_WRONLY | PJ_O_CLOEXEC;
         flags |= pjsua_var.log_cfg.log_file_flags;
         status = pj_file_open(pjsua_var.pool, 
                               pjsua_var.log_cfg.log_filename.ptr,
@@ -2363,7 +2377,7 @@ static pj_status_t create_sip_udp_sock(int af,
     }
 
     /* Create socket */
-    status = pj_sock_socket(af, pj_SOCK_DGRAM(), 0, &sock);
+    status = pj_sock_socket(af, pj_SOCK_DGRAM() | pj_SOCK_CLOEXEC(), 0, &sock);
     if (status != PJ_SUCCESS) {
         pjsua_perror(THIS_FILE, "socket() error", status);
         return status;
@@ -2586,8 +2600,8 @@ PJ_DEF(pj_status_t) pjsua_transport_create( pjsip_transport_type_e type,
         pjsua_var.tpdata[id].local_name = tp->local_name;
         pjsua_var.tpdata[id].data.tp = tp;
         pj_sockaddr_cp(&pjsua_var.tpdata[id].pub_addr, &pub_addr);
-        if (cfg->bound_addr.slen)
-            pjsua_var.tpdata[id].has_bound_addr = PJ_TRUE;
+        if (cfg->bound_addr.slen || cfg->public_addr.slen)
+            pjsua_var.tpdata[id].has_cfg_addr = PJ_TRUE;
 
 #if defined(PJ_HAS_TCP) && PJ_HAS_TCP!=0
 
@@ -3199,30 +3213,36 @@ void pjsua_parse_media_type( pj_pool_t *pool,
 
 
 /*
- * Internal function to init transport selector from transport id.
+ * Internal function to init transport selector based on account's config.
  */
-void pjsua_init_tpselector(pjsua_transport_id tp_id,
+void pjsua_init_tpselector(pjsua_acc_id acc_id,
                            pjsip_tpselector *sel)
 {
-    pjsua_transport_data *tpdata;
-    unsigned flag;
+    pjsua_acc *acc = &pjsua_var.acc[acc_id];
 
     pj_bzero(sel, sizeof(*sel));
-    if (tp_id == PJSUA_INVALID_ID)
-        return;
 
-    PJ_ASSERT_RETURN(tp_id >= 0 && 
-                     tp_id < (int)PJ_ARRAY_SIZE(pjsua_var.tpdata), );
-    tpdata = &pjsua_var.tpdata[tp_id];
+    if (acc->cfg.transport_id != PJSUA_INVALID_ID) {
+        pjsua_transport_data *tpdata;
+        unsigned flag;
 
-    flag = pjsip_transport_get_flag_from_type(tpdata->type);
+        PJ_ASSERT_RETURN(acc->cfg.transport_id >= 0 && 
+                         acc->cfg.transport_id <
+                         (int)PJ_ARRAY_SIZE(pjsua_var.tpdata), );
+        tpdata = &pjsua_var.tpdata[acc->cfg.transport_id];
 
-    if (flag & PJSIP_TRANSPORT_DATAGRAM) {
-        sel->type = PJSIP_TPSELECTOR_TRANSPORT;
-        sel->u.transport = tpdata->data.tp;
-    } else {
-        sel->type = PJSIP_TPSELECTOR_LISTENER;
-        sel->u.listener = tpdata->data.factory;
+        flag = pjsip_transport_get_flag_from_type(tpdata->type);
+
+        if (flag & PJSIP_TRANSPORT_DATAGRAM) {
+            sel->type = PJSIP_TPSELECTOR_TRANSPORT;
+            sel->u.transport = tpdata->data.tp;
+        } else {
+            sel->type = PJSIP_TPSELECTOR_LISTENER;
+            sel->u.listener = tpdata->data.factory;
+        }
+    } else if (acc->cfg.ipv6_sip_use != PJSUA_IPV6_ENABLED_NO_PREFERENCE) {
+        sel->type = PJSIP_TPSELECTOR_IP_VER;
+        sel->u.ip_ver = (pjsip_tpselector_ip_ver)acc->cfg.ipv6_sip_use;
     }
 }
 
