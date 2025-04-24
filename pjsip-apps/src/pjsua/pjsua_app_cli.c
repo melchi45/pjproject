@@ -38,6 +38,7 @@
 #define CMD_QUIT                    110
 #define CMD_RESTART                 120
 #define CMD_HANDLE_IP_CHANGE        130
+#define CMD_TOGGLE_SDP_OFFER        140
 
 /* call level 2 command */
 #define CMD_CALL_NEW                ((CMD_CALL*10)+1)
@@ -58,6 +59,7 @@
 #define CMD_CALL_DUMP_Q             ((CMD_CALL*10)+16)
 #define CMD_CALL_SEND_ARB           ((CMD_CALL*10)+17)
 #define CMD_CALL_LIST               ((CMD_CALL*10)+18)
+#define CMD_CALL_RTT                ((CMD_CALL*10)+19)
 
 /* im & presence level 2 command */
 #define CMD_PRESENCE_ADD_BUDDY      ((CMD_PRESENCE*10)+1)
@@ -803,6 +805,7 @@ static pj_status_t cmd_add_account(pj_cli_cmd_val *cval)
     acc_cfg.cred_info[0].data = cval->argv[5];
 
     acc_cfg.rtp_cfg = app_config.rtp_cfg;
+    acc_cfg.txt_red_level = app_config.txt_red_level;
     app_config_init_video(&acc_cfg);
 
     status = pjsua_acc_add(&acc_cfg, PJ_TRUE, NULL);
@@ -1942,6 +1945,31 @@ static pj_status_t cmd_dtmf_2833(pj_cli_cmd_val *cval)
     return PJ_SUCCESS;
 }
 
+/* Send real-time text */
+static pj_status_t cmd_rtt(pj_cli_cmd_val *cval)
+{
+    if (current_call == PJSUA_INVALID_ID) {
+
+        PJ_LOG(3,(THIS_FILE, "No current call"));
+
+    } else {
+        pjsua_call_send_text_param param;
+        pj_status_t status;
+
+        pjsua_call_send_text_param_default(&param);
+        param.text = cval->argv[1];
+        status = pjsua_call_send_text(current_call, &param);
+        if (status != PJ_SUCCESS) {
+            pjsua_perror(THIS_FILE, "Unable to send text", status);
+        } else {
+            const pj_str_t msg = pj_str("Text enqueued "
+                                        "for transmission\n");
+            pj_cli_sess_write_msg(cval->sess, msg.ptr, msg.slen);
+        }
+    }
+    return PJ_SUCCESS;
+}
+
 /* Send DTMF with SIP Info */
 static pj_status_t cmd_call_info(pj_cli_cmd_val *cval)
 {
@@ -2086,6 +2114,19 @@ static pj_status_t cmd_show_current_call(pj_cli_cmd_val *cval)
     return PJ_SUCCESS;
 }
 
+static pj_status_t cmd_toggle_call_sdp_offer(pj_cli_cmd_val* cval)
+{
+    char out_str[64];
+    app_config.enable_loam = !app_config.enable_loam;
+
+    pj_ansi_snprintf(out_str, sizeof(out_str),
+                   "Subsequent calls and UPDATEs will contain SDP offer: %s\n",
+                   app_config.enable_loam ? "No" : "Yes");
+    pj_cli_sess_write_msg(cval->sess, out_str, pj_ansi_strlen(out_str));
+
+    return PJ_SUCCESS;
+}
+
 /* Call handler */
 pj_status_t cmd_call_handler(pj_cli_cmd_val *cval)
 {
@@ -2093,6 +2134,15 @@ pj_status_t cmd_call_handler(pj_cli_cmd_val *cval)
     pj_cli_cmd_id cmd_id = pj_cli_get_cmd_id(cval->cmd);
 
     CHECK_PJSUA_RUNNING();
+
+    /* Update call setting */
+    pjsua_call_setting_default(&call_opt);
+    call_opt.aud_cnt = app_config.aud_cnt;
+    call_opt.vid_cnt = app_config.vid.vid_cnt;
+    call_opt.txt_cnt = app_config.txt_cnt;
+    if (app_config.enable_loam) {
+        call_opt.flag |= PJSUA_CALL_NO_SDP_OFFER;
+    }
 
     switch(cmd_id) {
     case CMD_CALL_NEW:
@@ -2132,6 +2182,9 @@ pj_status_t cmd_call_handler(pj_cli_cmd_val *cval)
         break;
     case CMD_CALL_D2833:
         status = cmd_dtmf_2833(cval);
+        break;
+    case CMD_CALL_RTT:
+        status = cmd_rtt(cval);
         break;
     case CMD_CALL_INFO:
         status = cmd_call_info(cval);
@@ -2875,6 +2928,10 @@ static pj_status_t add_call_command(pj_cli_t *c)
         "    </ARG>"
         "  </CMD>"
         "  <CMD name='list' id='1018' desc='Show current call'/>"
+        "  <CMD name='rtt' id='1019' sc='rt' desc='Send real-time text via RTP'>"
+        "    <ARG name='text_to_send' type='string' "
+        "     desc='Text to send'/>"
+        "  </CMD>"
         "</CMD>";
 
     pj_str_t xml = pj_str(call_command);
@@ -3221,12 +3278,17 @@ static pj_status_t add_other_command(pj_cli_t *c)
     char* ip_change_command =
         "<CMD name='ip_change' id='130' desc='Handle IP change'/>";
 
+    char* toggle_sdp_offer_command =
+        "<CMD name='toggle_sdp_offer' sc='o' id='140' "
+        "desc='Toggle SDP offer use on subsequent calls and UPDATEs' />";
+
     pj_status_t status;
     pj_str_t sleep_xml = pj_str(sleep_command);
     pj_str_t network_xml = pj_str(network_command);
     pj_str_t shutdown_xml = pj_str(shutdown_command);
     pj_str_t restart_xml = pj_str(restart_command);
     pj_str_t ip_change_xml = pj_str(ip_change_command);
+    pj_str_t toggle_sdp_offer_xml = pj_str(toggle_sdp_offer_command);
 
     status = pj_cli_add_cmd_from_xml(c, NULL,
                                      &sleep_xml, cmd_sleep_handler,
@@ -3256,6 +3318,13 @@ static pj_status_t add_other_command(pj_cli_t *c)
 
     status = pj_cli_add_cmd_from_xml(c, NULL,
                                      &ip_change_xml, cmd_ip_change_handler,
+                                     NULL, NULL);
+    if (status != PJ_SUCCESS)
+        return status;
+
+    status = pj_cli_add_cmd_from_xml(c, NULL,
+                                     &toggle_sdp_offer_xml,
+                                     cmd_toggle_call_sdp_offer,
                                      NULL, NULL);
 
     return status;

@@ -239,6 +239,7 @@
     #define PJMEDIA_HAS_PASSTHROUGH_CODEC_PCMU  1
     #define PJMEDIA_HAS_PASSTHROUGH_CODEC_PCMA  1
     #define PJMEDIA_HAS_PASSTHROUGH_CODEC_AMR   1
+    #define PJMEDIA_HAS_PASSTHROUGH_CODEC_G722  0
     #define PJMEDIA_HAS_PASSTHROUGH_CODEC_G729  1
     #define PJMEDIA_HAS_PASSTHROUGH_CODEC_ILBC  1
 
@@ -268,6 +269,7 @@
     #define PJMEDIA_HAS_PASSTHROUGH_CODEC_PCMU  1
     #define PJMEDIA_HAS_PASSTHROUGH_CODEC_PCMA  1
     #define PJMEDIA_HAS_PASSTHROUGH_CODEC_AMR   1
+    #define PJMEDIA_HAS_PASSTHROUGH_CODEC_G722  0
     #define PJMEDIA_HAS_PASSTHROUGH_CODEC_G729  1
     #define PJMEDIA_HAS_PASSTHROUGH_CODEC_ILBC  1
 
@@ -294,6 +296,7 @@
     #define PJMEDIA_HAS_PASSTHROUGH_CODEC_PCMU  1
     #define PJMEDIA_HAS_PASSTHROUGH_CODEC_PCMA  1
     #define PJMEDIA_HAS_PASSTHROUGH_CODEC_AMR   0
+    #define PJMEDIA_HAS_PASSTHROUGH_CODEC_G722  0
     #define PJMEDIA_HAS_PASSTHROUGH_CODEC_G729  0
     #define PJMEDIA_HAS_PASSTHROUGH_CODEC_ILBC  0
 
@@ -394,7 +397,12 @@
 
     /* Fine tune Speex's default settings for best performance/quality */
     #define PJMEDIA_CODEC_SPEEX_DEFAULT_QUALITY 5
-    
+
+    /* Using software clock for media flow can improve quality,
+     * i.e: more consistent RTP timing and less jitter/burst.
+     */
+    #define PJSUA_DEFAULT_SND_USE_SW_CLOCK      PJ_TRUE
+
     /*
      * PJSIP settings.
      */

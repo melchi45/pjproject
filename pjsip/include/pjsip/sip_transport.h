@@ -389,7 +389,7 @@ struct pjsip_rx_data
         /** Start of msg buffer. */
         char                    *msg_buf;
 
-        /** Length fo message. */
+        /** Length of message. */
         int                      len;
 
         /** The parsed message, if any. */
@@ -1303,6 +1303,19 @@ PJ_DECL(unsigned) pjsip_tpmgr_get_transport_count(pjsip_tpmgr *mgr);
 
 
 /**
+ * Return number of transports of the specified type currently registered to
+ * the transport manager.
+ *
+ * @param mgr       The transport manager.
+ * @param type      Transport type (can be from pjsip_transport_type_e enum)
+ *
+ * @return          Number of transports.
+ */
+PJ_DECL(unsigned) pjsip_tpmgr_get_transport_count_by_type(pjsip_tpmgr *mgr,
+                                                          int type);
+
+
+/**
  * Destroy a transport manager. Normally application doesn't need to call
  * this function directly, since a transport manager will be created and
  * destroyed automatically by the SIP endpoint.
@@ -1320,6 +1333,53 @@ PJ_DECL(pj_status_t) pjsip_tpmgr_destroy(pjsip_tpmgr *mgr);
  * @param mgr       The transport manager.
  */
 PJ_DECL(void) pjsip_tpmgr_dump_transports(pjsip_tpmgr *mgr);
+
+
+/**
+ * Parameter for pjsip_tpmgr_shutdown_all() function.
+ */
+typedef struct pjsip_tpmgr_shutdown_param
+{
+    /**
+     * Specify whether disconnection state notification should be sent
+     * immediately, see pjsip_transport_shutdown2() for more info.
+     *
+     * Default: PJ_TRUE.
+     */
+    pj_bool_t   force;
+
+    /**
+     * Specify whether UDP transports should also be shutdown.
+     *
+     * Default: PJ_TRUE.
+     */
+    pj_bool_t   include_udp;
+
+} pjsip_tpmgr_shutdown_param;
+
+
+/**
+ * Initialize transports shutdown parameter with default values.
+ *
+ * @param prm       The parameter to be initialized.
+ */
+PJ_DECL(void) pjsip_tpmgr_shutdown_param_default(
+                                    pjsip_tpmgr_shutdown_param *prm);
+
+
+/**
+ * Shutdown all transports. This basically invokes pjsip_transport_shutdown2()
+ * on all transports.
+ *
+ * @param mgr       The transport manager.
+ * @param param     The function parameters.
+ *
+ * @return          PJ_SUCCESS on success.
+ */
+PJ_DECL(pj_status_t) pjsip_tpmgr_shutdown_all(
+                                    pjsip_tpmgr *mgr,
+                                    const pjsip_tpmgr_shutdown_param *param);
+
 
 
 /*****************************************************************************

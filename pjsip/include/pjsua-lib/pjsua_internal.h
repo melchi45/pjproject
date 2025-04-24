@@ -68,6 +68,11 @@ struct pjsua_call_media
             pjmedia_vid_dev_index rdr_dev;  /**< The video-in render device */
         } v;
 
+        /** Text stream */
+        struct {
+            pjmedia_txt_stream  *stream;    /**< The text stream.           */
+        } t;
+
     } strm;
 
     pj_uint32_t          ssrc;      /**< RTP SSRC                           */
@@ -213,6 +218,8 @@ struct pjsua_call
                                             offer.                          */
     unsigned             rem_vid_cnt;  /**< No of active video in last remote
                                             offer.                          */
+    unsigned             rem_txt_cnt;  /**< No of active text in last remote
+                                            offer.                          */
     
     pj_bool_t            rx_reinv_async;/**< on_call_rx_reinvite() async.   */
     pj_timer_entry       reinv_timer;  /**< Reinvite retry timer.           */
@@ -241,6 +248,9 @@ struct pjsua_call
     unsigned             hangup_code;   /**< Hangup code.                   */
     pj_str_t             hangup_reason; /**< Hangup reason.                 */
     pjsua_msg_data      *hangup_msg_data;/**< Hangup message data.          */
+    pj_str_t             siprec_metadata;/** siprec metadata in body        */
+
+    pjmedia_av_sync     *av_sync;       /**< Media stream synchronizer      */
 };
 
 
@@ -333,6 +343,7 @@ typedef struct pjsua_acc
     pjsip_transport_type_e tp_type; /**< Transport type (for local acc or
                                          transport binding)             */
     pjsua_ip_change_op ip_change_op;/**< IP change process progress.    */
+    pjsip_auth_clt_sess shared_auth_sess; /**< share one auth over all requests */
 } pjsua_acc;
 
 
@@ -368,6 +379,7 @@ typedef struct pjsua_buddy
 {
     pj_pool_t           *pool;      /**< Pool for this buddy.           */
     unsigned             index;     /**< Buddy index.                   */
+    pjsua_acc_id         acc_id;    /**< Account index.                 */
     void                *user_data; /**< Application data.              */
     pj_str_t             uri;       /**< Buddy URI.                     */
     pj_str_t             contact;   /**< Contact learned from subscrp.  */
@@ -377,10 +389,12 @@ typedef struct pjsua_buddy
     unsigned             port;      /**< Buddy port.                    */
     pj_bool_t            monitor;   /**< Should we monitor?             */
     pjsip_dialog        *dlg;       /**< The underlying dialog.         */
-    pjsip_evsub         *sub;       /**< Buddy presence subscription    */
+    pjsip_evsub         *sub;       /**< Buddy subscription             */
+    pj_bool_t            presence;  /**< Presence subscription?         */
     unsigned             term_code; /**< Subscription termination code  */
     pj_str_t             term_reason;/**< Subscription termination reason */
     pjsip_pres_status    status;    /**< Buddy presence status.         */
+    pjsip_dlg_event_status dlg_ev_status;/**< Buddy dialog event status */
     pj_timer_entry       timer;     /**< Resubscription timer           */
 } pjsua_buddy;
 
@@ -772,6 +786,7 @@ void pjsua_ice_check_start_trickling(pjsua_call *call,
 pj_bool_t   pjsua_call_media_is_changing(pjsua_call *call);
 pj_status_t pjsua_call_media_init(pjsua_call_media *call_med,
                                   pjmedia_type type,
+                                  const pjmedia_sdp_session *rem_sdp,
                                   const pjsua_transport_config *tcfg,
                                   int security_level,
                                   int *sip_err_code,
@@ -962,6 +977,16 @@ void pjsua_vid_win_reset(pjsua_vid_win_id wid);
 #else
 #  define pjsua_vid_win_reset(wid)
 #endif
+
+/*
+ * Text
+ */
+void pjsua_txt_stop_stream(pjsua_call_media *call_med);
+pj_status_t pjsua_txt_channel_update(pjsua_call_media *call_med,
+                                     pj_pool_t *tmp_pool,
+                                     pjmedia_txt_stream_info *si,
+                                     const pjmedia_sdp_session *local_sdp,
+                                     const pjmedia_sdp_session *remote_sdp);
 
 /*
  * Schedule check for the need of re-INVITE/UPDATE after media update

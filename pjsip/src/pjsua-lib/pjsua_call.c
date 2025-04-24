@@ -433,14 +433,20 @@ on_make_call_med_tp_complete(pjsua_call_id call_id,
 {
     pjmedia_sdp_session *offer = NULL;
     pjsip_inv_session *inv = NULL;
-    pjsua_call *call = &pjsua_var.calls[call_id];
-    pjsua_acc *acc = &pjsua_var.acc[call->acc_id];
-    pjsip_dialog *dlg = call->async_call.dlg;
+    pjsua_call *call;
+    pjsua_acc *acc;
+    pjsip_dialog *dlg;
     unsigned options = 0;
     pjsip_tx_data *tdata;
     pj_bool_t cb_called = PJ_FALSE;
     pjsip_tpselector tp_sel;
     pj_status_t status = (info? info->status: PJ_SUCCESS);
+
+    /* Get call, account, and dialog */
+    PJ_ASSERT_RETURN(call_id != PJSUA_INVALID_ID, PJ_EINVAL);
+    call = &pjsua_var.calls[call_id];
+    acc = &pjsua_var.acc[call->acc_id];
+    dlg = call->async_call.dlg;
 
     PJSUA_LOCK();
 
@@ -642,8 +648,9 @@ PJ_DEF(void) pjsua_call_setting_default(pjsua_call_setting *opt)
     pj_assert(opt);
 
     pj_bzero(opt, sizeof(*opt));
-    opt->flag = PJSUA_CALL_INCLUDE_DISABLED_MEDIA;
+    opt->flag = 0; //PJSUA_CALL_INCLUDE_DISABLED_MEDIA;
     opt->aud_cnt = 1;
+    opt->txt_cnt = 1;
 
 #if defined(PJMEDIA_HAS_VIDEO) && (PJMEDIA_HAS_VIDEO != 0)
     opt->vid_cnt = 1;
@@ -665,6 +672,17 @@ PJ_DEF(void) pjsua_call_send_dtmf_param_default(
     pj_bzero(param, sizeof(*param));
     param->duration = PJSUA_CALL_SEND_DTMF_DURATION_DEFAULT;
 }
+
+/*
+ * Initialize pjsua_call_send_text_param default values.
+ */
+PJ_DEF(void) pjsua_call_send_text_param_default(
+                                             pjsua_call_send_text_param *param)
+{
+    pj_bzero(param, sizeof(*param));
+    param->med_idx = -1;
+}
+
 
 static pj_status_t apply_call_setting(pjsua_call *call,
                                       const pjsua_call_setting *opt,
@@ -881,6 +899,8 @@ PJ_DEF(pj_status_t) pjsua_call_make_call(pjsua_acc_id acc_id,
     if (status != PJ_SUCCESS) {
         pjsua_perror(THIS_FILE, "Failed to apply call setting", status);
         goto on_error;
+    } else if (!opt) {
+        opt = &call->opt;
     }
     
     /* Create sound port if none is instantiated, to check if sound device
@@ -954,12 +974,30 @@ PJ_DEF(pj_status_t) pjsua_call_make_call(pjsua_acc_id acc_id,
         goto on_error;
     }
 
+    /*
+     * Use pre defined Call-ID to be sent out with INVITE as opposed
+     * to using a randomly generated Call-ID
+     */
+
+    if( opt->custom_call_id.slen > 0 ){
+        pj_strdup(dlg->pool, &dlg->call_id->id, &opt->custom_call_id);
+        PJ_LOG(4,(THIS_FILE, "Set user defined "
+                             "Call-ID (%.*s)",
+                  (int)dlg->call_id->id.slen, dlg->call_id->id.ptr  ));
+        pj_bzero(&call->opt.custom_call_id,
+                  sizeof(call->opt.custom_call_id));
+    }
+
     /* Increment the dialog's lock otherwise when invite session creation
      * fails the dialog will be destroyed prematurely.
      */
     pjsip_dlg_inc_lock(dlg);
 
     dlg_set_via(dlg, acc);
+
+    if (acc->cfg.use_shared_auth) {
+        pjsip_dlg_set_auth_sess(dlg, &acc->shared_auth_sess);
+    }
 
     /* Calculate call's secure level */
     call->secure_level = get_secure_level(acc_id, dest_uri);
@@ -1184,6 +1222,7 @@ pj_status_t create_temp_sdp(pj_pool_t *pool,
 {
     const pj_str_t STR_AUDIO = { "audio", 5 };
     const pj_str_t STR_VIDEO = { "video", 5 };
+    const pj_str_t STR_TEXT  = { "text", 4 };
     const pj_str_t STR_IP6 = { "IP6", 3};
 
     pjmedia_sdp_session *sdp;
@@ -1248,6 +1287,14 @@ pj_status_t create_temp_sdp(pj_pool_t *pool,
 #else       
             m = pjmedia_sdp_media_clone_deactivate(pool, rem_sdp->media[i]);
 #endif      
+        } else if (pj_stricmp(&rem_sdp->media[i]->desc.media, &STR_TEXT)==0) {
+            m = PJ_POOL_ZALLOC_T(pool, pjmedia_sdp_media);
+            status = pjmedia_endpt_create_text_sdp(pjsua_var.med_endpt,
+                                                   pool, &sock_info, 0, &m);
+
+            if (status != PJ_SUCCESS)
+                return status;
+
         } else {
             m = pjmedia_sdp_media_clone_deactivate(pool, rem_sdp->media[i]);
         }
@@ -1327,6 +1374,9 @@ static pj_status_t verify_request(const pjsua_call *call,
 
     if (status == PJ_SUCCESS) {
         unsigned options = 0;
+
+        /* Add SIPREC support to prevent the "bad extension" error */
+        options |= PJSIP_INV_SUPPORT_SIPREC;
 
         /* Verify that we can handle the request. */
         status = pjsip_inv_verify_request3(rdata,
@@ -1786,6 +1836,45 @@ pj_bool_t pjsua_call_on_incoming(pjsip_rx_data *rdata)
     /* Verify that we can handle the request. */
     options |= PJSIP_INV_SUPPORT_100REL;
     options |= PJSIP_INV_SUPPORT_TIMER;
+
+    if(pjsua_var.acc[acc_id].cfg.use_siprec != PJSUA_SIP_SIPREC_INACTIVE){
+        options |= PJSIP_INV_SUPPORT_SIPREC;
+        if(pjsua_var.acc[acc_id].cfg.use_siprec == PJSUA_SIP_SIPREC_MANDATORY){
+            options |= PJSIP_INV_REQUIRE_SIPREC;
+        }
+    }
+
+    /* Check if the INVITE request is a siprec
+     * this function add PJSIP_INV_REQUIRE_SIPREC to options
+     * and returns the value PJ_SUCCESS 
+     */
+    status = pjsip_siprec_verify_request(rdata, &call->siprec_metadata, offer,
+                                &options, NULL, pjsua_var.endpt, &response);
+
+    if(status != PJ_SUCCESS){
+        /*
+         * No we can't handle the incoming INVITE request.
+         */
+        if (response) {
+            pjsip_response_addr res_addr;
+            ret_st_code = response->msg->line.status.code;
+
+            pjsip_get_response_addr(response->pool, rdata, &res_addr);
+            status = pjsip_endpt_send_response(pjsua_var.endpt, &res_addr, 
+                                               response, NULL, NULL);
+            if (status != PJ_SUCCESS) pjsip_tx_data_dec_ref(response);
+
+        } else {
+            /* Respond with 500 (Internal Server Error) */
+            ret_st_code = PJSIP_SC_INTERNAL_SERVER_ERROR;
+            pjsip_endpt_respond(pjsua_var.endpt, NULL, rdata, ret_st_code, 
+                                NULL, NULL, NULL, NULL);
+        }
+
+        goto on_return;
+    }
+
+
     if (pjsua_var.acc[acc_id].cfg.require_100rel == PJSUA_100REL_MANDATORY)
         options |= PJSIP_INV_REQUIRE_100REL;
     if (pjsua_var.acc[acc_id].cfg.ice_cfg.enable_ice) {
@@ -2029,7 +2118,7 @@ pj_bool_t pjsua_call_on_incoming(pjsip_rx_data *rdata)
                                       NULL);
                 }               
 
-                if (call->inv->dlg) {
+                if (call->inv && call->inv->dlg) {
                     pjsip_inv_terminate(call->inv, sip_err_code, PJ_FALSE);
                 }
                 pjsip_dlg_dec_lock(dlg);
@@ -2141,7 +2230,7 @@ pj_bool_t pjsua_call_on_incoming(pjsip_rx_data *rdata)
      */
     if (dlg->mod_data[pjsua_var.mod.id] == NULL) {
         /* In PJSUA2, on_incoming_call() may be called from 
-         * on_media_transport_created() hence this might already set
+         * on_create_media_transport() hence this might already set
          * to allow notification about fail events via on_call_state() and
          * on_call_tsx_state().
          */
@@ -2167,7 +2256,12 @@ pj_bool_t pjsua_call_on_incoming(pjsip_rx_data *rdata)
          * otherwise hangup the call with 480
          */
         if (pjsua_var.ua_cfg.cb.on_incoming_call) {
-            pjsua_var.ua_cfg.cb.on_incoming_call(acc_id, call_id, rdata);
+            /* For PJSUA2, avoid invoking this callback again when it has been
+             * invoked from on_create_media_transport().
+             */
+            if (call->incoming_data) {
+                pjsua_var.ua_cfg.cb.on_incoming_call(acc_id, call_id, rdata);
+            }
 
             /* Notes:
              * - the call might be reset when it's rejected or hangup
@@ -2178,6 +2272,7 @@ pj_bool_t pjsua_call_on_incoming(pjsip_rx_data *rdata)
              * answer/hangup should have been delayed (see #1923), 
              * so let's process the answer/hangup now.
              */
+
             if (call->async_call.call_var.inc_call.hangup) {
                 process_pending_call_hangup(call);
             } else if (call->med_ch_cb == NULL && call->inv) {
@@ -2425,6 +2520,7 @@ PJ_DEF(pj_status_t) pjsua_call_get_info( pjsua_call_id call_id,
     if (call->rem_offerer) {
         info->rem_aud_cnt = call->rem_aud_cnt;
         info->rem_vid_cnt = call->rem_vid_cnt;
+        info->rem_txt_cnt = call->rem_txt_cnt;
     }
 
     /* Build array of active media info */
@@ -2457,6 +2553,7 @@ PJ_DEF(pj_status_t) pjsua_call_get_info( pjsua_call_id call_id,
                 cap_dev = call_med->strm.v.cap_dev;
             }
             info->media[info->media_cnt].stream.vid.cap_dev = cap_dev;
+        } else if (call_med->type == PJMEDIA_TYPE_TEXT) {
         } else {
             continue;
         }
@@ -2493,6 +2590,7 @@ PJ_DEF(pj_status_t) pjsua_call_get_info( pjsua_call_id call_id,
                 cap_dev = call_med->strm.v.cap_dev;
             }
             info->prov_media[info->prov_media_cnt].stream.vid.cap_dev=cap_dev;
+        } else if (call_med->type == PJMEDIA_TYPE_TEXT) {
         } else {
             continue;
         }
@@ -2744,8 +2842,8 @@ PJ_DEF(pj_status_t) pjsua_call_answer2(pjsua_call_id call_id,
     if (status != PJ_SUCCESS)
         goto on_return;
 
-    if (call->inv->role == PJSIP_ROLE_UAC ||
-        !call->inv->invite_tsx ||
+    if (!call->inv->invite_tsx ||
+        call->inv->invite_tsx->role != PJSIP_ROLE_UAS ||
         call->inv->invite_tsx->state >= PJSIP_TSX_STATE_COMPLETED)
     {
         PJ_LOG(3,(THIS_FILE, "Unable to answer call (no incoming INVITE or "
@@ -3755,7 +3853,7 @@ PJ_DEF(pj_status_t) pjsua_call_send_dtmf(pjsua_call_id call_id,
                        get_dtmf_method_name(param->method)));
 
     if (param->method == PJSUA_DTMF_METHOD_RFC2833) {
-        status = pjsua_call_dial_dtmf(call_id, &param->digits);
+        status = pjsua_call_dial_dtmf2(call_id, &param->digits, param->duration);
     } else if (param->method == PJSUA_DTMF_METHOD_SIP_INFO) {
         const pj_str_t SIP_INFO = pj_str("INFO");
         int i;
@@ -4040,6 +4138,7 @@ static pj_bool_t is_non_av_fmt(const pjmedia_sdp_media *m,
                                const pj_str_t *fmt)
 {
     const pj_str_t STR_TEL = {"telephone-event", 15};
+    const pj_str_t STR_RED = {"red", 3};
     unsigned pt;
 
     pt = pj_strtoul(fmt);
@@ -4056,9 +4155,12 @@ static pj_bool_t is_non_av_fmt(const pjmedia_sdp_media *m,
         /* Get the format name */
         a = pjmedia_sdp_attr_find2(m->attr_count, m->attr, "rtpmap", fmt);
         if (a && pjmedia_sdp_attr_get_rtpmap(a, &rtpmap)==PJ_SUCCESS) {
-            /* Check for telephone-event */
-            if (pj_stricmp(&rtpmap.enc_name, &STR_TEL)==0)
+            /* Check for telephone-event and redundancy*/
+            if (pj_stricmp(&rtpmap.enc_name, &STR_TEL)==0 ||
+                pj_stricmp(&rtpmap.enc_name, &STR_RED)==0)
+            {
                 return PJ_TRUE;
+            }
         } else {
             /* Invalid SDP, should not reach here */
             pj_assert(!"SDP should have been validated!");
@@ -5117,10 +5219,7 @@ static void pjsua_call_on_state_changed(pjsip_inv_session *inv,
     }
 
     /* Release locks before calling callbacks, to avoid deadlock. */
-    while (PJSUA_LOCK_IS_LOCKED()) {
-        num_locks++;
-        PJSUA_UNLOCK();
-    }
+    num_locks = PJSUA_RELEASE_LOCK();
 
     /* Ticket #1627: Invoke on_call_tsx_state() when call is disconnected.
      *
@@ -5142,8 +5241,7 @@ static void pjsua_call_on_state_changed(pjsip_inv_session *inv,
         (*pjsua_var.ua_cfg.cb.on_call_state)(call->index, e);
 
     /* Re-acquire the locks. */
-    for (;num_locks > 0; num_locks--)
-        PJSUA_LOCK();
+    PJSUA_RELOCK(num_locks);
 
     /* call->inv may be NULL now */
 
@@ -6725,3 +6823,124 @@ static pjsip_redirect_op pjsua_call_on_redirected(pjsip_inv_session *inv,
     return op;
 }
 
+#if defined(PJSUA_MEDIA_HAS_PJMEDIA) && PJSUA_MEDIA_HAS_PJMEDIA != 0
+
+/*
+ * Get media stream info for the specified media index.
+ */
+PJ_DEF(pj_status_t) pjsua_call_get_stream_info( pjsua_call_id call_id,
+                                                unsigned med_idx,
+                                                pjsua_stream_info *psi)
+{
+    pjsua_call *call;
+    pjsua_call_media *call_med;
+    pj_status_t status = PJ_EINVAL;
+
+    PJ_ASSERT_RETURN(call_id>=0 && call_id<(int)pjsua_var.ua_cfg.max_calls,
+                     PJ_EINVAL);
+    PJ_ASSERT_RETURN(psi, PJ_EINVAL);
+
+    PJSUA_LOCK();
+
+    call = &pjsua_var.calls[call_id];
+
+    if (med_idx >= call->med_cnt)
+        goto on_return;
+
+    call_med = &call->media[med_idx];
+
+    if ((call_med->type == PJMEDIA_TYPE_AUDIO && !call_med->strm.a.stream) ||
+        (call_med->type == PJMEDIA_TYPE_VIDEO && !call_med->strm.v.stream) ||
+        (call_med->type == PJMEDIA_TYPE_TEXT && !call_med->strm.t.stream))
+    {
+        goto on_return;
+    }
+
+    psi->type = call_med->type;
+    switch (call_med->type) {
+    case PJMEDIA_TYPE_AUDIO:
+        status = pjmedia_stream_get_info(call_med->strm.a.stream,
+                                         &psi->info.aud);
+        break;
+#if defined(PJMEDIA_HAS_VIDEO) && (PJMEDIA_HAS_VIDEO != 0)
+    case PJMEDIA_TYPE_VIDEO:
+        status = pjmedia_vid_stream_get_info(call_med->strm.v.stream,
+                                             &psi->info.vid);
+        break;
+#endif
+    case PJMEDIA_TYPE_TEXT:
+        status = pjmedia_txt_stream_get_info(call_med->strm.t.stream,
+                                             &psi->info.txt);
+        break;
+    default:
+        status = PJMEDIA_EINVALIMEDIATYPE;
+        break;
+    }
+
+on_return:
+    PJSUA_UNLOCK();
+    return status;
+}
+
+
+/*
+ *  Get media stream statistic for the specified media index.
+ */
+PJ_DEF(pj_status_t) pjsua_call_get_stream_stat( pjsua_call_id call_id,
+                                                unsigned med_idx,
+                                                pjsua_stream_stat *stat)
+{
+    pjsua_call *call;
+    pjsua_call_media *call_med;
+    pjmedia_stream_common *c_strm = NULL;
+    pj_status_t status = PJ_EINVAL;
+
+    PJ_ASSERT_RETURN(call_id>=0 && call_id<(int)pjsua_var.ua_cfg.max_calls,
+                     PJ_EINVAL);
+    PJ_ASSERT_RETURN(stat, PJ_EINVAL);
+
+    PJSUA_LOCK();
+
+    call = &pjsua_var.calls[call_id];
+
+    if (med_idx >= call->med_cnt)
+        goto on_return;
+
+    call_med = &call->media[med_idx];
+
+    if ((call_med->type == PJMEDIA_TYPE_AUDIO && !call_med->strm.a.stream) ||
+        (call_med->type == PJMEDIA_TYPE_VIDEO && !call_med->strm.v.stream) ||
+        (call_med->type == PJMEDIA_TYPE_TEXT && !call_med->strm.t.stream))
+    {
+        goto on_return;
+    }
+
+    switch (call_med->type) {
+    case PJMEDIA_TYPE_AUDIO:
+        c_strm = (pjmedia_stream_common *)call_med->strm.a.stream;
+        break;
+#if defined(PJMEDIA_HAS_VIDEO) && (PJMEDIA_HAS_VIDEO != 0)
+    case PJMEDIA_TYPE_VIDEO:
+        c_strm = (pjmedia_stream_common *)call_med->strm.v.stream;
+        break;
+#endif
+    case PJMEDIA_TYPE_TEXT:
+        c_strm = (pjmedia_stream_common *)call_med->strm.t.stream;
+        break;
+    default:
+        status = PJMEDIA_EINVALIMEDIATYPE;
+        break;
+    }
+
+    if (c_strm) {
+        status = pjmedia_stream_common_get_stat(c_strm, &stat->rtcp);
+        if (status == PJ_SUCCESS)
+            status = pjmedia_stream_common_get_stat_jbuf(c_strm, &stat->jbuf);
+    }
+
+on_return:
+    PJSUA_UNLOCK();
+    return status;
+}
+
+#endif

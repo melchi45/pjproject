@@ -68,7 +68,7 @@ static int test_timer_heap(void)
     pool = pj_pool_create( mem, NULL, size, 4000, NULL);
     if (!pool) {
         PJ_LOG(3,("test", "...error: unable to create pool of %lu bytes",
-                  size));
+                  (unsigned long)size));
         return -10;
     }
 
@@ -94,8 +94,6 @@ static int test_timer_heap(void)
         pj_timestamp t1, t2, t_sched, t_cancel, t_poll;
         pj_time_val now, expire;
 
-        pj_gettimeofday(&now);
-        pj_srand(now.sec);
         t_sched.u32.lo = t_cancel.u32.lo = t_poll.u32.lo = 0;
 
         // Register timers
@@ -161,8 +159,8 @@ static int test_timer_heap(void)
         } while (PJ_TIME_VAL_LTE(now, expire)&&pj_timer_heap_count(timer) > 0);
 
         if (pj_timer_heap_count(timer)) {
-            PJ_LOG(3, (THIS_FILE, "ERROR: %ld timers left", 
-                       pj_timer_heap_count(timer)));
+            PJ_LOG(3, (THIS_FILE, "ERROR: %lu timers left", 
+                       (unsigned long)pj_timer_heap_count(timer)));
             ++err;
         }
         t_sched.u32.lo /= count; 
@@ -485,7 +483,6 @@ static int timer_stress_test(void)
     pj_thread_t **poll_threads = NULL;
     pj_thread_t **cancel_threads = NULL;
     struct thread_param tparam = {0};
-    pj_time_val now;
 #if SIMULATE_CRASH
     pj_timer_entry *entry;
     pj_pool_t *tmp_pool;
@@ -493,9 +490,6 @@ static int timer_stress_test(void)
 #endif
 
     PJ_LOG(3,("test", "...Stress test"));
-
-    pj_gettimeofday(&now);
-    pj_srand(now.sec);
 
     pool = pj_pool_create( mem, NULL, 128, 128, NULL);
     if (!pool) {
@@ -715,8 +709,8 @@ on_return:
     if (timer)
         pj_timer_heap_destroy(timer);
 
-    PJ_LOG(3,("test", "Total memory of timer heap: %ld",
-                      pj_timer_heap_mem_size(ST_ENTRY_COUNT)));
+    PJ_LOG(3,("test", "Total memory of timer heap: %lu",
+                      (unsigned long)pj_timer_heap_mem_size(ST_ENTRY_COUNT)));
 
     if (tparam.idx)
         pj_atomic_destroy(tparam.idx);
