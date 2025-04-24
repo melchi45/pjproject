@@ -67,3 +67,14 @@ Table of contents:
   - [PJLIB-UTIL](https://docs.pjsip.org/en/latest/api/pjlib-util/index.html) - utilities
   - [PJLIB](https://docs.pjsip.org/en/latest/api/pjlib/index.html) - portable library
 
+## Build using cmake
+
+Build using cmake with Microsoft vcpkg on Linux
+
+```shell
+# mkdir linux
+# cd linux
+# export VCPKG_ROOT="~/workspace/vcpkg"
+# cmake .. -B linux -G "Unix Makefiles" -DCMAKE_VERBOSE_MAKEFILE=ON DCMAKE_TOOLCHAIN_FILE="${VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake" -DCMAKE_PREFIX_PATH="${VCPKG_ROOT}/vcpkg/installed/x64-linux"
+# cmake --build linux --config Release
+```
